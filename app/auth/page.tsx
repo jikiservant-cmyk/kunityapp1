@@ -9,9 +9,13 @@ import Link from 'next/link';
 function AuthContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialMode = searchParams.get('mode') === 'register' ? 'register' : 'login';
-  
-  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+
+  useEffect(() => {
+    if (searchParams.get('mode') === 'register') {
+      setMode('register');
+    }
+  }, [searchParams]);
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -70,13 +74,13 @@ function AuthContent() {
         return;
       }
       
-      const { data: products } = await supabase.schema('kuntiy').from('saving_products').select('*').eq('organization_id', orgId);
+      const { data: products } = await supabase.schema('kuntiy').from('savings_products').select('*').eq('organization_id', orgId);
       
       if (products && products.length > 0) {
         setSavingProducts(products);
         setSelectedProductId(products[0].id);
       } else {
-        const { data: newProduct } = await supabase.schema('kuntiy').from('saving_products').insert({
+        const { data: newProduct } = await supabase.schema('kuntiy').from('savings_products').insert({
           organization_id: orgId,
           name: 'Standard Savings',
           code: 'STD',
@@ -165,17 +169,48 @@ function AuthContent() {
 
             if (member && selectedProductId) {
               const selectedProduct = savingProducts.find(p => p.id === selectedProductId);
-              const { error: accountError } = await supabase.schema('kuntiy').from('accounts').insert({
-                organization_id: orgId,
-                name: selectedProduct?.name || 'Main Wallet',
-                account_category: 'asset',
-                code: `WAL-${Math.floor(Math.random()*10000)}`,
-                member_id: member.id,
-                saving_product_id: selectedProductId,
-                cached_balance: 0.00
-              });
+              const productName = selectedProduct?.name || 'Main Wallet';
               
-              if (accountError) console.error("Account creation error:", accountError);
+              // 1. Try to find existing active member_savings linked to an active account
+              const { data: existingMs } = await supabase.schema('kuntiy')
+                .from('member_savings')
+                .select('id, account_id, accounts!inner(is_active, deleted_at)')
+                .eq('organization_id', orgId)
+                .eq('member_id', member.id)
+                .eq('savings_product_id', selectedProductId)
+                .eq('status', 'active')
+                .is('deleted_at', null)
+                .eq('accounts.is_active', true)
+                .is('accounts.deleted_at', null)
+                .limit(1)
+                .maybeSingle();
+
+              if (!existingMs) {
+                // 2. Insert new account
+                const { data: newAccount, error: accountError } = await supabase.schema('kuntiy').from('accounts').insert({
+                  organization_id: orgId,
+                  member_id: member.id,
+                  name: productName,
+                  account_category: 'asset',
+                  code: `WAL-${Math.floor(Math.random()*10000)}`,
+                  is_active: true,
+                  cached_balance: 0.00
+                }).select('id').single();
+                
+                if (accountError) {
+                  console.error("Account creation error:", accountError);
+                } else if (newAccount) {
+                  // 3. Create member_savings connection
+                  const { error: msError } = await supabase.schema('kuntiy').from('member_savings').insert({
+                    organization_id: orgId,
+                    member_id: member.id,
+                    savings_product_id: selectedProductId,
+                    account_id: newAccount.id,
+                    status: 'active'
+                  });
+                  if (msError) console.error("Member savings creation error:", msError);
+                }
+              }
             }
             router.push('/member');
           }
@@ -464,19 +499,19 @@ function AuthContent() {
 
           <div className="pt-8 text-center text-sm font-medium" style={{ color: T.sub }}>
             {mode === 'login' ? (
-              <p>
+              <div>
                 Don&apos;t have an account?{' '}
                 <button type="button" onClick={() => { setMode('register'); setStep(1); }} className="hover:opacity-80 transition-opacity font-semibold" style={{ color: T.blue }}>
                   Create one now
                 </button>
-              </p>
+              </div>
             ) : (
-              <p>
+              <div>
                 Already have an account?{' '}
                 <button type="button" onClick={() => { setMode('login'); setStep(1); }} className="hover:opacity-80 transition-opacity font-semibold" style={{ color: T.blue }}>
                   Sign in instead
                 </button>
-              </p>
+              </div>
             )}
           </div>
         </div>

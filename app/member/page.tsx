@@ -159,13 +159,23 @@ export default function MemberDashboard() {
     setMember(memberData);
 
     if (memberData) {
-      const { data: accountsData } = await supabase.schema('kuntiy').from('accounts').select('*, saving_product:saving_products(name, interest_rate)').eq('member_id', memberData.id);
+      const { data: msData } = await supabase.schema('kuntiy')
+        .from('member_savings')
+        .select('*, account:accounts(*), savings_product:savings_products(name, interest_rate)')
+        .eq('member_id', memberData.id)
+        .eq('status', 'active');
+        
+      const accountsData = msData?.map((ms: any) => ({
+        ...ms.account,
+        savings_product: ms.savings_product,
+        savings_product_id: ms.savings_product_id
+      })) || [];
       
       const mainWallet = accountsData?.find((a: any) => a.account_category === 'asset') || accountsData?.[0];
       setWallet(mainWallet);
       setAllAccounts(accountsData || []);
 
-      const { data: productsData } = await supabase.schema('kuntiy').from('saving_products').select('*').eq('organization_id', memberData.organization_id);
+      const { data: productsData } = await supabase.schema('kuntiy').from('savings_products').select('*').eq('organization_id', memberData.organization_id);
       setSavingProducts(productsData || []);
 
       if (mainWallet) {
@@ -182,19 +192,49 @@ export default function MemberDashboard() {
   const handleOpenAccount = async (productId: string, productName: string) => {
     setActionLoading(true);
     try {
-      const { error } = await supabase.schema('kuntiy').from('accounts').insert({
-        organization_id: member.organization_id,
-        member_id: member.id,
-        saving_product_id: productId,
-        name: productName,
-        account_category: 'asset',
-        // eslint-disable-next-line react-hooks/purity
-        code: `ACC-${Math.floor(Math.random()*10000)}`,
-        cached_balance: 0.00
-      });
-      if (error) throw error;
+      // 1. Try to find existing active member_savings linked to an active account
+      const { data: existingMs } = await supabase.schema('kuntiy')
+        .from('member_savings')
+        .select('id, account_id, accounts!inner(is_active, deleted_at)')
+        .eq('organization_id', member.organization_id)
+        .eq('member_id', member.id)
+        .eq('savings_product_id', productId)
+        .eq('status', 'active')
+        .is('deleted_at', null)
+        .eq('accounts.is_active', true)
+        .is('accounts.deleted_at', null)
+        .limit(1)
+        .maybeSingle();
+
+      if (!existingMs) {
+        // 2. Insert new account
+        const { data: newAccount, error: accountError } = await supabase.schema('kuntiy').from('accounts').insert({
+          organization_id: member.organization_id,
+          member_id: member.id,
+          name: productName,
+          account_category: 'asset',
+          code: `ACC-${Math.floor(Math.random()*10000)}`,
+          is_active: true,
+          cached_balance: 0.00
+        }).select('id').single();
+        
+        if (accountError) throw accountError;
+        
+        if (newAccount) {
+          // 3. Create member_savings connection
+          const { error: msError } = await supabase.schema('kuntiy').from('member_savings').insert({
+            organization_id: member.organization_id,
+            member_id: member.id,
+            savings_product_id: productId,
+            account_id: newAccount.id,
+            status: 'active'
+          });
+          if (msError) throw msError;
+        }
+      }
+      
       await fetchData();
-      alert(`Account opened: ${productName}`);
+      alert(existingMs ? `You already have an active ${productName} account.` : `Account opened: ${productName}`);
     } catch (e: any) {
       alert("Error: " + e.message);
     } finally {
@@ -775,7 +815,7 @@ export default function MemberDashboard() {
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize:14, fontWeight:700, color:T.green }}>{UGXM(acc.cached_balance || 0)}</div>
-                      <div style={{ fontSize:11, color:T.sub }}>{acc.saving_product?.interest_rate}% APY</div>
+                      <div style={{ fontSize:11, color:T.sub }}>{acc.savings_product?.interest_rate || 0}% APY</div>
                     </div>
                   </div>
                 )) : <div style={{ fontSize: 13, color: T.sub }}>No accounts found.</div>}
@@ -783,23 +823,29 @@ export default function MemberDashboard() {
 
               <Card style={{ marginBottom:14 }}>
                 <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>Available Saving Plans</div>
-                {savingProducts.length > 0 ? savingProducts.map((p: any, i: number, arr: any[]) => (
+                {savingProducts.length > 0 ? savingProducts.map((p: any, i: number, arr: any[]) => {
+                  const hasAccount = allAccounts.some(acc => acc.savings_product_id === p.id);
+                  return (
                   <div key={p.id} style={{
                     display:"flex", justifyContent:"space-between", alignItems:"center",
                     padding:"12px 0", borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"
                   }}>
                     <div>
                       <div style={{ fontSize:14, fontWeight:600, color:T.text }}>{p.name}</div>
-                      <div style={{ fontSize:12, color:T.sub }}>{p.interest_rate}% APY</div>
+                      <div style={{ fontSize:12, color:T.sub }}>{p.interest_rate || 0}% APY</div>
                     </div>
-                    <button onClick={() => handleOpenAccount(p.id, p.name)} style={{
-                      padding: "6px 12px", background: T.red, color: "white", borderRadius: 8,
-                      fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none"
-                    }}>
-                      Open
-                    </button>
+                    {hasAccount ? (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: T.green }}>Active</span>
+                    ) : (
+                      <button onClick={() => handleOpenAccount(p.id, p.name)} disabled={actionLoading} style={{
+                        padding: "6px 12px", background: actionLoading ? T.ghost : T.cMid, color: "white", borderRadius: 8,
+                        fontSize: 12, fontWeight: 700, cursor: actionLoading ? "not-allowed" : "pointer", border: "none"
+                      }}>
+                        {actionLoading ? "..." : "Open"}
+                      </button>
+                    )}
                   </div>
-                )) : <div style={{ fontSize: 13, color: T.sub }}>No available plans.</div>}
+                )}) : <div style={{ fontSize: 13, color: T.sub }}>No available plans.</div>}
               </Card>
 
               <Card style={{ marginBottom:24 }}>

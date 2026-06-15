@@ -178,8 +178,9 @@ export default function MemberDashboard() {
       const { data: productsData } = await supabase.schema('kuntiy').from('savings_products').select('*').eq('organization_id', memberData.organization_id);
       setSavingProducts(productsData || []);
 
-      if (mainWallet) {
-        const { data: txData } = await supabase.schema('kuntiy').from('journal_lines').select('*, journal_entries(description, created_at)').eq('account_id', mainWallet.id).order('created_at', { ascending: false }).limit(20);
+      const accountIds = accountsData.map((a: any) => a.id);
+      if (accountIds.length > 0) {
+        const { data: txData } = await supabase.schema('kuntiy').from('journal_lines').select('*, journal_entries(description, created_at)').in('account_id', accountIds).order('created_at', { ascending: false }).limit(30);
         setTransactions(txData || []);
       }
 
@@ -622,24 +623,38 @@ export default function MemberDashboard() {
               </div>
             </div>
 
-            <Card style={{ marginBottom:20 }}>
-              <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:16 }}>Breakdown</div>
-              {[
-                { label:"Primary Wallet", amount:balances.wallet, pct:100, color:T.blue   },
-              ].map((b,i,arr)=>(
-                <div key={b.label} style={{ padding:"13px 0", borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                      <div style={{ width:10, height:10, borderRadius:"50%", background:b.color }} />
-                      <span style={{ fontSize:14, color:T.text }}>{b.label}</span>
-                    </div>
-                    <span style={{ fontWeight:700, fontSize:14, color:T.text, fontVariantNumeric:"tabular-nums" }}>
-                      {UGX(b.amount)}
-                    </span>
+            <Card style={{ marginBottom:14 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>My Saving Accounts</div>
+              {allAccounts.length > 0 ? allAccounts.map((acc: any, i: number, arr: any[]) => (
+                <div key={acc.id} style={{
+                  display:"flex", justifyContent:"space-between", alignItems:"center",
+                  padding:"12px 0", borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"
+                }}>
+                  <div>
+                    <div style={{ fontSize:14, fontWeight:600, color:T.text }}>{acc.name}</div>
+                    <div style={{ fontSize:12, color:T.sub }}>{acc.code}</div>
                   </div>
-                  <Bar pct={b.pct} gradient={`linear-gradient(90deg, ${b.color}, ${b.color}88)`} />
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:T.green }}>{UGXM(acc.cached_balance || 0)}</div>
+                    <div style={{ fontSize:11, color:T.sub }}>{acc.savings_product?.interest_rate || 0}% APY</div>
+                  </div>
                 </div>
+              )) : <div style={{ fontSize: 13, color: T.sub }}>No accounts found.</div>}
+            </Card>
+
+            <Card style={{ marginBottom:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Saving Transactions</div>
+                <button onClick={()=>setActiveTab("history")} style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:T.blue, fontWeight:700 }}>
+                  See all
+                </button>
+              </div>
+              {parsedTxns.slice(0,5).map((t,i)=>(
+                <TxnRow key={t.id} t={t} last={i===(Math.min(parsedTxns.length, 5)-1)} />
               ))}
+              {parsedTxns.length === 0 && (
+                <div style={{ textAlign:"center", padding:"16px 0", color:T.ghost, fontSize:13 }}>No activity yet</div>
+              )}
             </Card>
 
             <button onClick={() => setActiveModal('deposit')} style={{
@@ -800,25 +815,6 @@ export default function MemberDashboard() {
                     <span style={{ fontSize:14, fontWeight:600, color:T.text, textTransform: 'capitalize' }}>{row.val}</span>
                   </div>
                 ))}
-              </Card>
-
-              <Card style={{ marginBottom:14 }}>
-                <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>My Saving Accounts</div>
-                {allAccounts.length > 0 ? allAccounts.map((acc: any, i: number, arr: any[]) => (
-                  <div key={acc.id} style={{
-                    display:"flex", justifyContent:"space-between", alignItems:"center",
-                    padding:"12px 0", borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"
-                  }}>
-                    <div>
-                      <div style={{ fontSize:14, fontWeight:600, color:T.text }}>{acc.name}</div>
-                      <div style={{ fontSize:12, color:T.sub }}>{acc.code}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize:14, fontWeight:700, color:T.green }}>{UGXM(acc.cached_balance || 0)}</div>
-                      <div style={{ fontSize:11, color:T.sub }}>{acc.savings_product?.interest_rate || 0}% APY</div>
-                    </div>
-                  </div>
-                )) : <div style={{ fontSize: 13, color: T.sub }}>No accounts found.</div>}
               </Card>
 
               <Card style={{ marginBottom:14 }}>
